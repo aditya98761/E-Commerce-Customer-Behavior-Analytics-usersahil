@@ -1,0 +1,91 @@
+\documentclass[conference]{IEEEtran}
+\usepackage{cite,amsmath,amssymb,booktabs,url,balance}
+\title{An Integrated E-Commerce Customer Behavior Analytics Platform Using the Olist Dataset}
+\author{\IEEEauthorblockN{Sahil}\IEEEauthorblockA{Big Data Analytics Project\\India}}
+\begin{document}\maketitle
+\begin{abstract}
+This paper describes a local e-commerce analytics application built with React, FastAPI, and PostgreSQL for the Brazilian E-Commerce Public Dataset by Olist. It integrates a dashboard, recency-frequency-monetary (RFM) customer analysis, K-Means segmentation, Apriori association rules, daily revenue forecasting, persistent run history, and personalized product recommendations. Recommendations use delivered purchase histories, Jaccard similarity between customer product sets, similarity-weighted scoring of unseen items, and a popularity fallback. The contribution is an integrated and inspectable analytics workflow, not a new learning algorithm. Olist covers historical Brazilian marketplace orders from 2016--2018 and cannot support claims about current or India-specific trends. No offline model metrics are reported because a reproducible evaluation run was not supplied.
+\end{abstract}
+\begin{IEEEkeywords}e-commerce analytics, customer segmentation, RFM, association rules, collaborative filtering, Olist\end{IEEEkeywords}
+\section{Introduction}
+Retail order histories support analysis of customer value, product affinity, and sales dynamics, but using them requires reliable joins, analytical methods, and a usable presentation layer. This project integrates those functions in a local web application. The design question is how a multi-table transaction dataset can serve several analyses through one application and database.
+
+Contributions are: (1) an end-to-end analytics application; (2) SQL compatibility views that adapt Olist data to the existing analytics schema while preserving source tables; and (3) an interpretable customer-to-customer product recommender. This is a system implementation, not a novel-algorithm or commercial-impact claim.
+\section{Dataset and Data Model}
+The Brazilian E-Commerce Public Dataset by Olist contains approximately 100,000 orders from 2016--2018 and includes order, customer, product, payment, seller, review, and location information [1]. It is anonymized and distributed as nine CSV files: customers, geolocation, order items, payments, reviews, orders, products, sellers, and category translations. The primary joins connect orders to customer records and items, then items to products and sellers. Order-specific customer IDs can be linked across repeat purchases using \texttt{customer\_unique\_id} [1].
+\begin{table}[t]
+\caption{Olist tables and their row meaning}
+\centering\footnotesize
+\begin{tabular}{p{0.29\columnwidth} p{0.61\columnwidth}}
+\toprule
+\textbf{Table group} & \textbf{A row represents}\\
+\midrule
+Customers, sellers & A buyer or seller with ZIP prefix, city, and state\\
+Orders & One order with status and lifecycle timestamps\\
+Order items & One product line with seller, price, and freight\\
+Payments & One payment with method, installments, and value\\
+Reviews & One review with score, comment, and timestamps\\
+Products & A catalog item with category and measurements\\
+Geolocation & A ZIP-prefix coordinate record\\
+Translation & Portuguese category and English translation\\
+\bottomrule
+\end{tabular}
+\end{table}
+\subsection{Compatibility and assumptions}
+SQL creates read-only views named \texttt{customers}, \texttt{products}, \texttt{orders}, and \texttt{order\_items}, plus an integer customer mapping and tables for analytics runs and outputs. The original Olist tables remain intact. The item view sets quantity to one because the Olist item file has no quantity column; it uses item price as revenue and excludes freight. The shared order view includes delivered, canceled, and unavailable statuses and flags the latter two as cancellations. Recommendations use delivered orders only. Amounts remain in Brazilian reais (BRL).
+\section{System Architecture}
+The React and TypeScript frontend sends HTTP/JSON requests to a Python FastAPI backend. SQLAlchemy connects the API to PostgreSQL. An analysis request creates a run record; a background task updates status and saves results. Pages retrieve saved results rather than retraining per page request.
+\begin{table}[t]
+\caption{Application components}
+\centering\footnotesize
+\begin{tabular}{p{0.24\columnwidth} p{0.66\columnwidth}}
+\toprule
+Presentation & React, TypeScript, Vite, charts, API client\\
+API & Python, FastAPI, validation, database access\\
+Analytics & Pandas, NumPy, scikit-learn, mlxtend\\
+Storage & PostgreSQL source data, views, persisted runs\\
+\bottomrule
+\end{tabular}
+\end{table}
+\texttt{/api/health} checks database access; \texttt{/api/data-source} reports detected source, currency, and readiness. Dashboard, customer, RFM, clustering, basket, forecast, recommendations, import, and run-history endpoints serve the UI. Jobs currently execute in the API process, not a distributed queue.
+\section{Analytical Methods}
+\subsection{Dashboard and RFM}
+The dashboard summarizes revenue, orders, customers, average order value, repeat purchases, cancellations, time trends, products, and geography. RFM recency is days from the last purchase to the day after the last dataset date; frequency is distinct orders; monetary value is non-canceled item revenue. Rank-based quintiles assign scores from 1 to 5, with recency reversed so recent buyers score higher. Rule-based labels include Champions, Loyal Customers, At Risk, and Hibernating.
+\subsection{Customer segmentation}
+The clustering pipeline applies $\log(1+x)$ to recency, frequency, and monetary features, then standardizes them. It evaluates candidate $k$ from 2 to 8, bounded by customer count, with silhouette score and chooses the best unless $k$ is fixed. K-Means uses a fixed seed; cluster profiles and a two-dimensional PCA projection are saved for visualization [2]. Clusters are descriptive, not ground-truth classes.
+\subsection{Market-basket analysis}
+The system creates invoice-by-product binary baskets, considers up to 150 frequent products by default, removes single-item baskets, and mines rules with Apriori. For $X\Rightarrow Y$, support is the transaction share containing $X\cup Y$, confidence estimates $P(Y\mid X)$, and lift compares confidence with the marginal frequency of $Y$. Itemset length is bounded to three by default [3].
+\subsection{Revenue forecasting}
+Daily revenue fills missing dates with zero. A Gradient Boosting Regressor uses weekday, day of month, month, lags of 28, 35, and 42 days, and a shifted seven-day rolling mean. The final 28 days form a chronological test window. Test MAE and RMSE are compared with a seasonal-naive baseline that repeats the last observed weekday values. The model is refitted on all history for a forecast horizon up to 28 days [4]. At least 120 days plus test history are required. No measured metric values are claimed here.
+\section{Personalized Recommendations}
+The recommender uses delivered purchase histories as sets of distinct product IDs. For target customer $u$ and another customer $v$, similarity is Jaccard overlap:
+\begin{equation}
+J(u,v)=\frac{|P_u\cap P_v|}{|P_u\cup P_v|},
+\end{equation}
+where $P_u$ and $P_v$ are product sets. Up to 100 overlapping neighbors are considered. An unseen product $i$ is scored by
+\begin{equation}
+s(u,i)=\sum_{v\in N(u)}J(u,v)\mathbb{I}[i\in P_v],
+\end{equation}
+where $N(u)$ is the neighbor set. Items rank by score and supporting-neighbor count. If no peer candidates exist, popular delivered products absent from the target history form a fallback.
+
+The interface shows customer history, product IDs, translated categories, and the number of similar customers supporting peer recommendations. Olist lacks readable product titles in the product table. The method uses positive purchases only; it has no browsing, impression, cart, or explicit rating signals. It is an interpretable baseline, not a production recommender.
+\section{Implementation and Workflow}
+Operators import all nine CSVs into PostgreSQL in foreign-key order and run compatibility SQL after data loading. The backend database URL is configured in \texttt{backend/.env}. The application includes Dashboard, Customers \& RFM, Segmentation, Products \& Baskets, Recommendations, Forecasting, Data Import \& Quality, and Run History pages. Users inspect source readiness, view metrics, and trigger analyses. Results persist in PostgreSQL. Workbook import is UCI-specific; Olist CSVs are loaded through pgAdmin. The project owner reports that the Olist application and populated recommendation page are working.
+\section{Evaluation Status and Discussion}
+This paper describes implemented functionality and methodology. It does not claim measured accuracy, relevance, runtime, usability, or business impact. No held-out recommendation test, forecast metric output, or reproducible runtime benchmark was provided. A populated interface demonstrates an execution path, not model quality.
+
+Future evaluation should train on earlier delivered orders and hold out later interactions, comparing recommendations with popularity. Precision@K, Recall@K, catalog coverage, and results by customer activity should be reported. Forecast MAE and RMSE should be reported against the seasonal baseline for fixed dates, in BRL. Clustering should include cluster sizes, profiles, and silhouette score. Actual database row counts and date range should be captured from the imported database.
+
+Olist is historical and Brazil-specific; it cannot substantiate current Indian trends. The compatibility layer simplifies quantity and excludes freight from item revenue. Sparse customer histories create cold-start and limited-overlap cases. Geolocation, payments, and reviews are imported but are not central to current displayed analytics. Background jobs inside the API process suit local demonstration but are not resilient to process restarts.
+\section{Conclusion}
+This project connects Olist relational data with customer analysis, product affinity, revenue forecasting, and personalized suggestions through a web application. Its engineering contribution is the integration of database setup, schema adaptation, persisted analytics runs, API routes, and user-facing pages. The recommender uses Jaccard similarity on delivered histories and has a popularity fallback. Quantitative offline evaluation, additional Olist signals, and a temporally newer dataset are important next steps.
+\section*{Acknowledgment}
+The author thanks the Olist dataset contributors for making anonymized marketplace data available for research and education [1].
+\balance
+\begin{thebibliography}{00}
+\bibitem{olist} Olist, Brazilian E-Commerce Public Dataset by Olist, Kaggle, 2018.
+\bibitem{macqueen} J. MacQueen, Some methods for classification and analysis of multivariate observations, 1967.
+\bibitem{agrawal} R. Agrawal and R. Srikant, Fast algorithms for mining association rules in large databases, in Proceedings of VLDB, pp. 487--499, 1994.
+\bibitem{friedman} J. H. Friedman, Greedy function approximation: A gradient boosting machine, Annals of Statistics, vol. 29, no. 5, pp. 1189--1232, 2001, doi: 10.1214/aos/1013203451.
+\end{thebibliography}
+\end{document}

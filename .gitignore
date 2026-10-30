@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+.venv/
+venv/
+/myenv/
+.pytest_cache/
+backend/uploads/
+backend/data/
+backend/Online Retail.xlsx
+*.db
+node_modules/
+frontend/dist/
+.vscode/
